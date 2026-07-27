@@ -1,0 +1,37 @@
+README.md
+  s_34fcaba23fe94c::t_d1bcef19a96df3 106
+  s_34fcaba23fe94c::t_d306ab5eff7a70 5-12
+tests/fixtures/settings-post.html
+  s_34fcaba23fe94c::t_4e3089b0facfb5 8-11,15-21
+tests/live-tieba-smoke.js
+  s_34fcaba23fe94c::t_a7f3b04d595836 32-33,65-72,74-82
+CHANGELOG.md
+  s_34fcaba23fe94c::t_d306ab5eff7a70 3-14
+package.json
+  s_34fcaba23fe94c::t_d306ab5eff7a70 3
+tests/tiebamuoyu.test.js
+  s_34fcaba23fe94c::t_54b609090f67bf 136-142,146-147,152,154
+  s_34fcaba23fe94c::t_96aee3dce6a5dc 388-389
+  s_34fcaba23fe94c::t_4e3089b0facfb5 125-135,143-145,148-151,153,155-156,380-387
+tiebamuoyu.js
+  s_34fcaba23fe94c::t_d306ab5eff7a70 4,32
+  s_34fcaba23fe94c::t_f7e38bf28942f0 286-294,715,717,1565-1567
+  s_34fcaba23fe94c::t_8d617c0f90abf2 168-185,567,1535-1536
+  s_34fcaba23fe94c::t_d1bcef19a96df3 712
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "6c074431bf8fe89d77f119661df002d08b7ff68a",
+  "prompts": {},
+  "sessions": {
+    "s_34fcaba23fe94c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68cd-13bc-7513-a6e5-e979020fe67e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "syk1225453 <793188471@qq.com>"
+    }
+  }
+}
