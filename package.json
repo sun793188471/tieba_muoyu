@@ -1,0 +1,13 @@
+{
+  "name": "tieba-moyu",
+  "version": "2.0.0",
+  "private": true,
+  "description": "百度贴吧优化摸鱼体验 userscript 的回归测试",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:live": "node tests/live-tieba-smoke.js"
+  },
+  "devDependencies": {
+    "jsdom": "^29.0.0"
+  }
+}
