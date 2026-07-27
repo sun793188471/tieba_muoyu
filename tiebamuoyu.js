@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         百度贴吧优化摸鱼体验
 // @namespace    tieba-moyu-script
-// @version      2.0.1
+// @version      2.0.5
 // @author       Moyu
 // @description  百度贴吧显示优化，功能增强，优雅的摸鱼
 // @license      MIT
@@ -21,6 +21,10 @@
 (function () {
     'use strict';
 
+    const RENDER_FRAME_PARAM = '__tb_moyu_render';
+    // 用显式 URL 标记隔离内部渲染页，避免油猴沙箱拒绝读取 frameElement 后中断整个脚本初始化。
+    if (new URLSearchParams(location.search).get(RENDER_FRAME_PARAM) === '1') return;
+
     // =============================================
     //  核心类 TieBaScript
     // =============================================
@@ -29,7 +33,7 @@
             this.setting = { original: [], normal: {}, advanced: {} };
             this.modules = [];
             this.style = '';
-            this.version = '2.0.1';
+            this.version = '2.0.5';
         }
 
         getModule(name) {
@@ -111,6 +115,7 @@
         }
 
         renderAlways() {
+            if (!this.isExcelManagedMode()) return;
             for (const m of this.modules) {
                 if (m.renderAlwaysFunc) {
                     try { m.renderAlwaysFunc(this); } catch (e) { console.error(`[${m.name}] renderAlways:`, e); }
@@ -119,6 +124,7 @@
         }
 
         renderThreads() {
+            if (!this.isExcelManagedMode()) return;
             this.$$('.j_thread_list:not([tb-render])').forEach(el => {
                 for (const m of this.modules) {
                     if (m.renderThreadsFunc) {
@@ -130,6 +136,7 @@
         }
 
         renderForms() {
+            if (!this.isExcelManagedMode()) return;
             this.$$('.l_post.j_l_post:not([tb-render])').forEach(el => {
                 for (const m of this.modules) {
                     if (m.renderFormsFunc) {
@@ -184,12 +191,112 @@
         }
 
         /**
+         * 判断 Excel 模式是否已经接管页面展示。
+         * @returns {boolean} true 表示 `R` 已开启，展示设置可以作用于 Excel 托管界面。
+         */
+        isExcelManagedMode() {
+            return this.getRuntimeBoolean('tb__rt_excelMode', this.setting.normal.excelMode);
+        }
+
+        /**
+         * 按 Excel 总开关同步会改变原生页面外观的样式类。
+         * @param {boolean} active 是否由 Excel 模式接管页面展示。
+         * @returns {void} 无返回值；关闭接管时会完整还原贴吧原生展示类。
+         */
+        syncExcelManagedDisplay(active) {
+            const managedClasses = [
+                'tb__excel-managed', 'tb__adblock',
+                'tb__hide-avatar', 'tb__hide-image', 'tb__hide-header',
+                'tb__hide-sidebar', 'tb__dark-mode', 'tb__eye-care'
+            ];
+            managedClasses.forEach(className => document.body.classList.remove(className));
+            if (!active) {
+                this.restoreNativePage();
+                this.getModule('AutoPage')?.stop?.();
+                return;
+            }
+
+            // 展示设置只在 R 开启后落到页面，关闭 R 时不污染贴吧原生内容。
+            document.body.classList.add('tb__excel-managed');
+            if (this.setting.normal.adBlock) document.body.classList.add('tb__adblock');
+            if (this.getRuntimeBoolean('tb__rt_hideAvatar', this.setting.normal.hideAvatar)) document.body.classList.add('tb__hide-avatar');
+            if (this.getRuntimeBoolean('tb__rt_hideImage', this.setting.normal.hideImage)) document.body.classList.add('tb__hide-image');
+            if (this.setting.normal.hideHeader) document.body.classList.add('tb__hide-header');
+            if (this.setting.normal.hideSidebar) document.body.classList.add('tb__hide-sidebar');
+
+            const eyeCareEnabled = this.getRuntimeBoolean('tb__rt_eyeCareMode', this.setting.normal.eyeCareMode);
+            const darkModeEnabled = this.getRuntimeBoolean('tb__rt_darkMode', this.setting.normal.darkMode);
+            if (eyeCareEnabled) document.body.classList.add('tb__eye-care');
+            else if (darkModeEnabled) document.body.classList.add('tb__dark-mode');
+            this.getModule('AutoPage')?.start?.(this);
+        }
+
+        /**
+         * 记录元素原显示状态后由脚本临时隐藏，便于关闭 Excel 模式时无损还原。
+         * @param {HTMLElement} element 需要在托管期间隐藏的页面元素。
+         * @returns {void} 无返回值；同一元素重复调用不会覆盖初始显示状态。
+         */
+        hideManagedElement(element) {
+            if (!element || element.dataset.tbManagedHidden === '1') return;
+            element.dataset.tbManagedHidden = '1';
+            element.dataset.tbManagedDisplay = element.style.display || '';
+            element.style.display = 'none';
+        }
+
+        /**
+         * 撤销脚本在 Excel 托管期间对贴吧原生 DOM 的可见修改。
+         * @returns {void} 无返回值；恢复显示、链接、图片地址、折叠和作者标记。
+         */
+        restoreNativePage() {
+            this.$$('[data-tb-managed-hidden="1"]').forEach(element => {
+                element.style.display = element.dataset.tbManagedDisplay || '';
+                delete element.dataset.tbManagedHidden;
+                delete element.dataset.tbManagedDisplay;
+            });
+            this.$$('[data-tb-folded]').forEach(element => {
+                element.classList.remove('tb__quote-folded');
+                element.style.maxHeight = element.dataset.tbManagedMaxHeight || '';
+                delete element.dataset.tbManagedMaxHeight;
+                delete element.dataset.tbFolded;
+            });
+            this.$$('.tb__quote-expand, .tb__ban-btn, .tb__author-badge').forEach(element => element.remove());
+            this.$$('.tb__is-author').forEach(element => element.classList.remove('tb__is-author'));
+            this.$$('[data-tb-managed-target]').forEach(link => {
+                const original = link.dataset.tbManagedTarget;
+                if (original) link.setAttribute('target', original);
+                else link.removeAttribute('target');
+                delete link.dataset.tbManagedTarget;
+            });
+            this.$$('[data-tb-managed-src]').forEach(image => {
+                const original = image.dataset.tbManagedSrc;
+                if (original) image.setAttribute('src', original);
+                else image.removeAttribute('src');
+                delete image.dataset.tbManagedSrc;
+            });
+            this.$$('[data-tb-managed-autopage="1"]').forEach(element => element.remove());
+            this.$$('.j_thread_list[tb-render], .l_post.j_l_post[tb-render]').forEach(element => element.removeAttribute('tb-render'));
+            this.$('#tb__autopage_sentinel')?.remove();
+            this.$('#tb__img_viewer')?.classList.remove('active');
+        }
+
+        /**
+         * 校验展示快捷键只能在 Excel 接管期间执行。
+         * @returns {boolean} true 表示可以继续切换；false 表示已提示用户先开启 `R`。
+         */
+        canToggleManagedDisplay() {
+            if (this.isExcelManagedMode()) return true;
+            this.popNotification('请先按 R 开启 Excel 模式');
+            return false;
+        }
+
+        /**
          * 获取页面图片当前可用的预览地址，优先使用贴吧懒加载属性。
          * @param {HTMLImageElement} image 图片元素。
          * @returns {string} 可用于表格预览的图片地址；没有有效地址时返回空字符串。
          */
         getImagePreviewUrl(image) {
-            const attributes = ['src', 'data-tb-lazyload', 'data-original', 'original', 'bpic', 'origin-src'];
+            // 吧页隐藏渲染时 src 仍可能是通用 icon，占位图不能覆盖 data-original 中的真实缩略图。
+            const attributes = ['data-original', 'data-tb-lazyload', 'original', 'src', 'bpic', 'origin-src'];
             for (const attribute of attributes) {
                 const value = image?.getAttribute?.(attribute);
                 if (value && !value.startsWith('data:image')) return this.normalizeImageUrl(value);
@@ -236,7 +343,8 @@
                 if (normalized && !candidates.includes(normalized)) candidates.push(normalized);
             };
 
-            ['origin-src', 'data-original-src'].forEach(attribute => {
+            // 吧页缩略图的 bpic 是服务端直接提供的未裁剪原图，必须优先于缩略图域名推导。
+            ['bpic', 'origin-src', 'data-original-src'].forEach(attribute => {
                 addCandidate(image?.getAttribute?.(attribute));
             });
 
@@ -685,18 +793,16 @@
             body.tb__adblock .j_tabthem_tag {display:none!important}
         `,
         initFunc(ctx) {
-            if (!ctx.setting.normal.adBlock) return;
-            document.body.classList.add('tb__adblock');
+            // 广告样式类由 ExcelMode 的总开关统一同步。
         },
         renderAlwaysFunc(ctx) {
             if (!ctx.setting.normal.adBlock) return;
-            ctx.$$('[id^="mediago"], .tb_rich_poster_container, .tb_poster_placeholder').forEach(el => el.remove());
             ctx.$$('.j_thread_list').forEach(el => {
                 const dataField = el.getAttribute('data-field');
                 if (dataField) {
                     try {
                         const d = JSON.parse(dataField);
-                        if (d.is_ad || d.is_promo) el.style.display = 'none';
+                        if (d.is_ad || d.is_promo) ctx.hideManagedElement(el);
                     } catch {}
                 }
             });
@@ -720,8 +826,8 @@
             body.tb__hide-avatar .tb_icon_author_rely {display:none!important}
         `,
         initFunc(ctx) {
-            if (ctx.getRuntimeBoolean('tb__rt_hideAvatar', ctx.setting.normal.hideAvatar)) document.body.classList.add('tb__hide-avatar');
             ctx.getModule('ShortCutKeys').register('Q', '隐藏头像', () => {
+                if (!ctx.canToggleManagedDisplay()) return;
                 document.body.classList.toggle('tb__hide-avatar');
                 const on = document.body.classList.contains('tb__hide-avatar');
                 ctx.setValue('tb__rt_hideAvatar', on ? 'true' : 'false');
@@ -751,8 +857,8 @@
             body.tb__dark-mode .tb__img-tag{background:#21262d!important;border-color:#30363d!important;color:#8b949e!important}
         `,
         initFunc(ctx) {
-            if (ctx.getRuntimeBoolean('tb__rt_hideImage', ctx.setting.normal.hideImage)) document.body.classList.add('tb__hide-image');
             ctx.getModule('ShortCutKeys').register('E', '隐藏图片', () => {
+                if (!ctx.canToggleManagedDisplay()) return;
                 document.body.classList.toggle('tb__hide-image');
                 const on = document.body.classList.contains('tb__hide-image');
                 ctx.setValue('tb__rt_hideImage', on ? 'true' : 'false');
@@ -774,8 +880,8 @@
         asyncStyle(ctx) {
             if (!ctx.setting.normal.imgResize) return '';
             const w = ctx.setting.advanced.imgResizeWidth || 250;
-            return `.d_post_content .BDE_Image{max-width:${w}px!important;height:auto!important;cursor:zoom-in;transition:max-width .3s}
-                    .d_post_content .BDE_Image:hover{max-width:${w * 2}px!important}`;
+            return `body.tb__excel-managed .d_post_content .BDE_Image{max-width:${w}px!important;height:auto!important;cursor:zoom-in;transition:max-width .3s}
+                    body.tb__excel-managed .d_post_content .BDE_Image:hover{max-width:${w * 2}px!important}`;
         }
     });
 
@@ -802,7 +908,7 @@
             body.tb__hide-header .forum_rcmd {display:none!important}
         `,
         initFunc(ctx) {
-            if (ctx.setting.normal.hideHeader) document.body.classList.add('tb__hide-header');
+            // 由 ExcelMode 统一同步，避免 R 关闭时改变贴吧原生版头。
         }
     });
 
@@ -819,7 +925,7 @@
             body.tb__hide-sidebar #container .content{width:auto!important}
         `,
         initFunc(ctx) {
-            if (ctx.setting.normal.hideSidebar) document.body.classList.add('tb__hide-sidebar');
+            // 由 ExcelMode 统一同步，避免 R 关闭时改变贴吧原生布局。
         }
     });
 
@@ -845,6 +951,7 @@
             el.querySelectorAll('.core_reply_wrapper').forEach(wrapper => {
                 if (wrapper.dataset.tbFolded) return;
                 if (wrapper.scrollHeight > h) {
+                    wrapper.dataset.tbManagedMaxHeight = wrapper.style.maxHeight || '';
                     wrapper.classList.add('tb__quote-folded');
                     wrapper.style.maxHeight = h + 'px';
                     const btn = document.createElement('div');
@@ -878,7 +985,9 @@
         asyncStyle(ctx) {
             const size = ctx.setting.advanced.fontResize || 14;
             if (size === 14) return '';
-            return `.d_post_content, .j_d_post_content, .lzl_content_main, .j_thread_list .threadlist_title a, .j_thread_list .threadlist_abs {font-size:${size}px!important}`;
+            return `body.tb__excel-managed .d_post_content, body.tb__excel-managed .j_d_post_content,
+                    body.tb__excel-managed .lzl_content_main, body.tb__excel-managed .j_thread_list .threadlist_title a,
+                    body.tb__excel-managed .j_thread_list .threadlist_abs {font-size:${size}px!important}`;
         }
     });
 
@@ -910,8 +1019,12 @@
             docker.querySelector('#tb__jump_refresh').addEventListener('click', () => location.reload());
             docker.querySelector('#tb__jump_setting').addEventListener('click', () => ctx.openSettingPanel?.());
 
-            ctx.getModule('ShortCutKeys').register('T', '回到顶部', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
-            ctx.getModule('ShortCutKeys').register('B', '回到底部', () => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }));
+            ctx.getModule('ShortCutKeys').register('T', '回到顶部', () => {
+                if (ctx.isExcelManagedMode()) window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+            ctx.getModule('ShortCutKeys').register('B', '回到底部', () => {
+                if (ctx.isExcelManagedMode()) window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+            });
         }
     });
 
@@ -970,7 +1083,7 @@
             const text = title + ' ' + abs;
             for (const kw of this._keywords) {
                 const matched = kw instanceof RegExp ? kw.test(text) : text.includes(kw);
-                if (matched) { el.style.display = 'none'; return; }
+                if (matched) { ctx.hideManagedElement(el); return; }
             }
         },
         renderFormsFunc(el, ctx) {
@@ -978,7 +1091,7 @@
             const content = el.querySelector('.d_post_content, .j_d_post_content')?.textContent || '';
             for (const kw of this._keywords) {
                 const matched = kw instanceof RegExp ? kw.test(content) : content.includes(kw);
-                if (matched) { el.style.display = 'none'; return; }
+                if (matched) { ctx.hideManagedElement(el); return; }
             }
         }
     });
@@ -1063,13 +1176,13 @@
                     this._banList[name] = true;
                     ctx.setValue('tb__banlist', JSON.stringify(this._banList));
                     ctx.popMsg(`已屏蔽: ${name}`);
-                    el.style.display = 'none';
+                    ctx.hideManagedElement(el);
                 });
                 authorEl.parentElement.appendChild(banBtn);
             }
 
             if (this._banList[name]) {
-                el.style.display = 'none';
+                ctx.hideManagedElement(el);
             }
         },
         renderThreadsFunc(el, ctx) {
@@ -1082,7 +1195,7 @@
                 if (df) { name = JSON.parse(df).author_name || ''; }
             } catch {}
             if (!name) name = (el.querySelector('.frs-author-name')?.textContent || '').trim();
-            if (name && this._banList[name]) el.style.display = 'none';
+            if (name && this._banList[name]) ctx.hideManagedElement(el);
         }
     });
 
@@ -1186,8 +1299,8 @@
             body.tb__dark-mode .tb__lzl-content{background:#0d1117!important}
         `,
         initFunc(ctx) {
-            if (ctx.getRuntimeBoolean('tb__rt_darkMode', ctx.setting.normal.darkMode)) document.body.classList.add('tb__dark-mode');
             ctx.getModule('ShortCutKeys').register('D', '暗黑模式', () => {
+                if (!ctx.canToggleManagedDisplay()) return;
                 document.body.classList.toggle('tb__dark-mode');
                 const on = document.body.classList.contains('tb__dark-mode');
                 if (on) {
@@ -1228,10 +1341,7 @@
             body.tb__eye-care .tb__docker-btn{background:#d4edda!important}
         `,
         initFunc(ctx) {
-            if (ctx.getRuntimeBoolean('tb__rt_eyeCareMode', ctx.setting.normal.eyeCareMode)) {
-                document.body.classList.add('tb__eye-care');
-                document.body.classList.remove('tb__dark-mode');
-            }
+            // 由 ExcelMode 统一同步，护眼与暗黑模式仍保持互斥。
         }
     });
 
@@ -1454,11 +1564,8 @@
             const seen = new Set();
             const bars = [];
             const addBar = (a) => {
-                let kw = '';
-                try {
-                    // searchParams 能容忍贴吧页面中的不完整百分号编码，避免单个异常链接中断 Excel 初始化。
-                    kw = new URL(a.href, location.href).searchParams.get('kw') || '';
-                } catch {}
+                const href = a.getAttribute('href') || a.href || '';
+                const kw = this._decodeForumKeyword(href, a.textContent);
                 if (seen.has(kw) || !kw) return;
                 seen.add(kw);
                 bars.push({ name: kw, kw, href: a.href });
@@ -1474,8 +1581,176 @@
             this._bars = bars.slice(0, 20);
             return this._bars;
         },
+        /**
+         * 解码贴吧链接中的吧名，兼容 UTF-8、旧 GBK 百分号编码和异常编码回退。
+         * @param {string} href 贴吧链接原始地址。
+         * @param {string} fallbackText 链接节点上可读的吧名文本。
+         * @returns {string} 可用于 Sheet 标签和请求键的可读吧名；无法识别时返回清理后的节点文本。
+         */
+        _decodeForumKeyword(href, fallbackText = '') {
+            const rawMatch = String(href || '').match(/[?&]kw=([^&#]*)/i);
+            if (!rawMatch) return String(fallbackText || '').trim();
+            const encoded = rawMatch[1].replace(/\+/g, ' ');
+            try {
+                const decoded = decodeURIComponent(encoded);
+                if (decoded && !decoded.includes('\uFFFD')) return decoded;
+            } catch {}
+
+            try {
+                const bytes = [];
+                for (let index = 0; index < encoded.length;) {
+                    const escaped = encoded.slice(index).match(/^%([0-9a-f]{2})/i);
+                    if (escaped) {
+                        bytes.push(parseInt(escaped[1], 16));
+                        index += 3;
+                    } else {
+                        const codePoint = encoded.codePointAt(index);
+                        if (codePoint > 0x7f) throw new Error('非百分号编码字符不能按 GBK 字节解析');
+                        bytes.push(codePoint);
+                        index += 1;
+                    }
+                }
+                const decoded = new TextDecoder('gbk').decode(Uint8Array.from(bytes)).trim();
+                if (decoded && !decoded.includes('\uFFFD')) return decoded;
+            } catch {}
+            return String(fallbackText || '').trim();
+        },
+        /**
+         * 根据当前 Sheet 同步“打开原贴”入口，仅允许跳转到有效的 HTTP(S) 帖子地址。
+         * @param {HTMLElement} overlay Excel 模式根元素。
+         * @param {string} href 当前帖子原始地址；非帖子 Sheet 传空字符串。
+         * @returns {void} 无返回值；无有效帖子地址时隐藏入口。
+         */
+        _syncOriginalPostLink(overlay, href = '') {
+            const link = overlay.querySelector('#tb__excel_origin');
+            if (!link) return;
+            const safeHref = this._safeHref(href);
+            if (!safeHref || !/\/p\/\d+/.test(safeHref)) {
+                link.removeAttribute('href');
+                link.style.display = 'none';
+                return;
+            }
+            link.href = safeHref;
+            link.style.removeProperty('display');
+        },
+        /**
+         * 从贴吧帖子列表 DOM 提取 Excel 行，并统计真正的帖子媒体图片数量。
+         * @param {Document|Element} root 已完成解析或渲染的贴吧列表根节点。
+         * @returns {{rows: Array<Array<string|{html: string}>>, imageCount: number}} 表格行及帖子媒体图片总数。
+         */
+        _collectThreadRows(root) {
+            const rows = [];
+            let imageCount = 0;
+            root.querySelectorAll('.j_thread_list[data-field]').forEach((el, index) => {
+                const titleLink = el.querySelector('.threadlist_title a, a.j_th_tit');
+                const titleText = el.querySelector('.j_th_tit') || titleLink;
+                const title = titleText?.textContent?.trim() || '';
+                let href = this._safeHref(titleLink?.getAttribute('href') || '');
+
+                let dataField = {};
+                try {
+                    dataField = JSON.parse(el.getAttribute('data-field') || '{}');
+                } catch {}
+                if (!href && dataField.id) href = 'https://tieba.baidu.com/p/' + dataField.id;
+                const author = dataField.author_name || el.querySelector('.frs-author-name')?.textContent?.trim() || '';
+
+                const replyElement = el.querySelector('.threadlist_rep_num');
+                const replyText = replyElement?.querySelector('.red_text')?.textContent?.trim()
+                    || replyElement?.textContent?.trim().match(/\d+/)?.[0];
+                const reply = replyText || String(dataField.reply_num || 0);
+                const last = el.querySelector('.threadlist_author .frs-author-name-wrap .frs-author-name, .is_show_create_time')?.textContent?.trim() || '';
+
+                const mediaImages = el.querySelectorAll('.threadlist_media img, .threadlist_pic img');
+                imageCount += mediaImages.length;
+                const imageHtml = this._buildExcelImagesHtml(mediaImages);
+                if (title) {
+                    const titleCell = href
+                        ? `<a href="${this._escapeAttr(href)}">${this._escapeHtml(title)}</a>${imageHtml}`
+                        : `${this._escapeHtml(title)}${imageHtml}`;
+                    rows.push([`${index + 1}`, this._htmlCell(titleCell), author, reply, last]);
+                }
+            });
+            return { rows, imageCount };
+        },
+        /**
+         * 在隐藏的同源贴吧页面中等待站点脚本补齐动态缩略图，再返回可安全解析的 DOM 快照。
+         * @param {string} href 需要渲染的贴吧列表 URL。
+         * @returns {Promise<Document|null>} 渲染完成的文档快照；超时、跨域或加载失败时返回 null。
+         */
+        _loadRenderedForumDocument(href) {
+            return new Promise(resolve => {
+                let parsedUrl;
+                try {
+                    parsedUrl = new URL(href, location.href);
+                } catch {
+                    resolve(null);
+                    return;
+                }
+                if (parsedUrl.origin !== location.origin || parsedUrl.pathname !== '/f') {
+                    resolve(null);
+                    return;
+                }
+                // 子页面会再次命中用户脚本，通过查询参数让它在入口安全退出，避免递归创建 Excel 外壳。
+                parsedUrl.searchParams.set(RENDER_FRAME_PARAM, '1');
+
+                const frame = document.createElement('iframe');
+                frame.className = 'tb__forum-render-frame';
+                frame.setAttribute('aria-hidden', 'true');
+                frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1280px;height:900px;opacity:0;pointer-events:none;border:0';
+                let settled = false;
+                let pollTimer = 0;
+                let timeoutTimer = 0;
+
+                const finish = (sourceDocument = null) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(pollTimer);
+                    clearTimeout(timeoutTimer);
+                    let snapshot = null;
+                    try {
+                        if (sourceDocument?.documentElement) {
+                            snapshot = new DOMParser().parseFromString(sourceDocument.documentElement.outerHTML, 'text/html');
+                        }
+                    } catch {}
+                    frame.remove();
+                    resolve(snapshot);
+                };
+
+                frame.addEventListener('load', () => {
+                    let attempts = 0;
+                    const inspect = () => {
+                        let frameDocument = null;
+                        try {
+                            frameDocument = frame.contentDocument;
+                        } catch {
+                            finish(null);
+                            return;
+                        }
+                        const threadCount = frameDocument?.querySelectorAll('.j_thread_list[data-field]').length || 0;
+                        const imageCount = frameDocument?.querySelectorAll('.threadlist_media img, .threadlist_pic img').length || 0;
+                        if (imageCount > 0 || (threadCount > 0 && attempts >= 20)) {
+                            finish(frameDocument);
+                            return;
+                        }
+                        attempts += 1;
+                        pollTimer = setTimeout(inspect, 100);
+                    };
+                    inspect();
+                }, { once: true });
+                timeoutTimer = setTimeout(() => {
+                    let frameDocument = null;
+                    try {
+                        frameDocument = frame.contentDocument;
+                    } catch {}
+                    finish(frameDocument);
+                }, 4000);
+                frame.src = parsedUrl.href;
+                document.body.appendChild(frame);
+            });
+        },
         _toggle(ctx) {
             this._ctx = ctx;
+            ctx.syncExcelManagedDisplay(this._active);
             let overlay = document.getElementById('tb__excel_overlay');
             if (!this._active) {
                 if (overlay) overlay.classList.remove('active');
@@ -1502,7 +1777,11 @@
 
             this._currentSheet = '__home__';
             const rows = this._collectData(ctx, pageType);
-            this._sheetCache['__home__'] = { rows, type: pageType };
+            this._sheetCache['__home__'] = {
+                rows,
+                type: pageType,
+                originalUrl: pageType === 'forms' ? this._safeHref(location.href) : ''
+            };
 
             if (pageType === 'home') {
                 this._nextPageUrls['__home__'] = '__home_scroll__';
@@ -1532,7 +1811,8 @@
                     <div class="tb__excel-menu">
                         <span>文件</span><span>开始</span><span>插入</span><span>页面布局</span><span>公式</span><span>数据</span><span>审阅</span><span>视图</span>
                     </div>
-                    <span style="margin-left:auto;cursor:pointer" id="tb__excel_setting" title="打开摸鱼设置">⚙ 设置</span>
+                    <a id="tb__excel_origin" target="_blank" rel="noopener noreferrer" style="margin-left:auto;color:inherit;text-decoration:none;display:none" title="在新标签页打开贴吧原贴">↗ 打开原贴</a>
+                    <span style="cursor:pointer" id="tb__excel_setting" title="打开摸鱼设置">⚙ 设置</span>
                     <span style="cursor:pointer" id="tb__excel_close" title="退出Excel模式">✕ 退出</span>
                 </div>
                 <div class="tb__excel-ribbon">
@@ -1561,6 +1841,7 @@
 
             this._bindOverlayEvents(overlay);
             this._renderTable(overlay, rows, pageType);
+            this._syncOriginalPostLink(overlay, this._sheetCache['__home__'].originalUrl);
 
             overlay.querySelector('#tb__excel_setting').addEventListener('click', () => {
                 ctx.openSettingPanel?.();
@@ -1994,7 +2275,9 @@
         },
         async _openPost(href, title, overlay) {
             const ctx = this._ctx;
-            const postKey = '__post__' + href.replace(/[?#].*$/, '');
+            const originalUrl = this._safeHref(href);
+            if (!originalUrl || !/\/p\/\d+/.test(originalUrl)) return;
+            const postKey = '__post__' + originalUrl.replace(/[?#].*$/, '');
             const maxLabel = 18;
             const tabTitle = title.length > maxLabel ? title.slice(0, maxLabel) + '...' : title;
 
@@ -2010,7 +2293,7 @@
                 postTab = document.createElement('div');
                 postTab.className = 'tb__sheet-tab tb__sheet-post';
                 postTab.dataset.sheet = postKey;
-                postTab.dataset.href = href;
+                postTab.dataset.href = originalUrl;
                 postTab.title = title;
                 postTab.innerHTML = `
                     <span class="tb__tab-label">${this._escapeHtml(tabTitle)}</span>
@@ -2048,6 +2331,7 @@
             tabsContainer.querySelectorAll('.tb__sheet-tab').forEach(t => t.classList.remove('active'));
             postTab.classList.add('active');
             this._currentSheet = postKey;
+            this._syncOriginalPostLink(overlay, originalUrl);
 
             if (this._sheetCache[postKey]) {
                 this._renderTable(overlay, this._sheetCache[postKey].rows, 'forms');
@@ -2059,14 +2343,14 @@
             postTab.classList.add('tb__sheet-loading');
 
             try {
-                const resp = await fetch(href, { credentials: 'include' });
+                const resp = await fetch(originalUrl, { credentials: 'include' });
                 const html = await resp.text();
                 const uncommented = html.replace(/<!--/g, '').replace(/-->/g, '');
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(uncommented, 'text/html');
                 const rows = [];
                 const posts = doc.querySelectorAll('.l_post');
-                const tidMatch = href.match(/\/p\/(\d+)/);
+                const tidMatch = originalUrl.match(/\/p\/(\d+)/);
                 const tid = tidMatch ? tidMatch[1] : '';
 
                 posts.forEach((el, i) => {
@@ -2108,7 +2392,14 @@
                 }
                 if (totalPages === 1) totalPages = Math.max(1, Math.ceil(rows.length / 30));
 
-                this._sheetCache[postKey] = { rows, type: 'forms', baseUrl: href.split('?')[0], currentPage: 1, totalPages };
+                this._sheetCache[postKey] = {
+                    rows,
+                    type: 'forms',
+                    baseUrl: originalUrl.split('?')[0],
+                    originalUrl,
+                    currentPage: 1,
+                    totalPages
+                };
                 postTab.classList.remove('tb__sheet-loading');
                 if (this._currentSheet === postKey) {
                     this._renderTable(overlay, rows, 'forms');
@@ -2131,15 +2422,19 @@
 
             if (sheetKey === '__home__') {
                 const cached = this._sheetCache['__home__'];
+                this._syncOriginalPostLink(overlay, cached.originalUrl);
                 this._renderTable(overlay, cached.rows, cached.type);
                 return;
             }
 
             if (this._sheetCache[sheetKey]) {
                 const cached = this._sheetCache[sheetKey];
+                this._syncOriginalPostLink(overlay, cached.originalUrl || tab.dataset.href);
                 this._renderTable(overlay, cached.rows, cached.type || 'threads');
                 return;
             }
+
+            this._syncOriginalPostLink(overlay, '');
 
             const content = overlay.querySelector('#tb__excel_content');
             content.innerHTML = '<div style="text-align:center;padding:40px;color:#999;font-size:14px">加载中...</div>';
@@ -2151,68 +2446,7 @@
                 const uncommented = html.replace(/<!--/g, '').replace(/-->/g, '');
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(uncommented, 'text/html');
-                const rows = [];
-
-                doc.querySelectorAll('.j_thread_list[data-field]').forEach((el, i) => {
-                    let title = '', href = '', author = '', reply = '0';
-                    const titleLink = el.querySelector('.threadlist_title a, a.j_th_tit');
-                    const titleText = el.querySelector('.j_th_tit') || titleLink;
-                    if (titleText) title = titleText.textContent.trim();
-                    if (titleLink) {
-                        href = this._safeHref(titleLink.getAttribute('href') || '');
-                        if (href && !href.startsWith('http')) href = 'https://tieba.baidu.com' + href;
-                    }
-                    if (!href) {
-                        try {
-                            const df = el.getAttribute('data-field');
-                            if (df) {
-                                const parsed = JSON.parse(df);
-                                if (parsed.id) href = 'https://tieba.baidu.com/p/' + parsed.id;
-                                if (!author && parsed.author_name) author = parsed.author_name;
-                            }
-                        } catch {}
-                    }
-                    if (!author) {
-                        try {
-                            const df = el.getAttribute('data-field');
-                            if (df) author = JSON.parse(df).author_name || '';
-                        } catch {}
-                    }
-                    if (!author) author = el.querySelector('.frs-author-name')?.textContent?.trim() || '';
-
-                    reply = '0';
-                    const replyEl = el.querySelector('.threadlist_rep_num');
-                    if (replyEl) {
-                        const redText = replyEl.querySelector('.red_text');
-                        if (redText) {
-                            reply = redText.textContent.trim();
-                        } else {
-                            const allText = replyEl.textContent.trim();
-                            const match = allText.match(/\d+/);
-                            if (match) reply = match[0];
-                        }
-                    }
-                    if (!reply || reply === '0') {
-                        try {
-                            const df = el.getAttribute('data-field');
-                            if (df) {
-                                const parsed = JSON.parse(df);
-                                if (parsed.reply_num) reply = String(parsed.reply_num);
-                            }
-                        } catch {}
-                    }
-
-                    const last = el.querySelector('.threadlist_author .frs-author-name-wrap .frs-author-name, .is_show_create_time')?.textContent?.trim() || '';
-
-                    const imgHtml = this._buildExcelImagesHtml(el.querySelectorAll('.threadlist_media img, .threadlist_pic img'));
-
-                    if (title) {
-                        const titleCell = href
-                            ? `<a href="${this._escapeAttr(href)}">${this._escapeHtml(title)}</a>${imgHtml}`
-                            : `${this._escapeHtml(title)}${imgHtml}`;
-                        rows.push([`${i + 1}`, this._htmlCell(titleCell), author, reply, last]);
-                    }
-                });
+                let { rows, imageCount } = this._collectThreadRows(doc);
 
                 const nextLink = doc.querySelector('.pb_list_pager a.next, #frs_list_pager a.next, .l_pager .pager_next');
                 if (nextLink && nextLink.href) {
@@ -2222,6 +2456,22 @@
                 this._sheetCache[sheetKey] = { rows, type: 'threads' };
                 if (this._currentSheet === sheetKey) {
                     this._renderTable(overlay, rows, 'threads');
+                }
+
+                // 贴吧列表缩略图由站点脚本异步补齐；静态响应无图时再读取渲染后的同源页面。
+                if (rows.length > 0 && imageCount === 0) {
+                    const renderedDocument = await this._loadRenderedForumDocument(url);
+                    if (renderedDocument) {
+                        const rendered = this._collectThreadRows(renderedDocument);
+                        if (rendered.rows.length > 0 && rendered.imageCount > 0) {
+                            rows = rendered.rows;
+                            imageCount = rendered.imageCount;
+                            this._sheetCache[sheetKey] = { rows, type: 'threads' };
+                            if (this._currentSheet === sheetKey) {
+                                this._renderTable(overlay, rows, 'threads');
+                            }
+                        }
+                    }
                 }
             } catch (e) {
                 console.error('Sheet load failed:', e);
@@ -2432,9 +2682,10 @@
 
                     const last = el.querySelector('.threadlist_author .frs-author-name-wrap .frs-author-name, .is_show_create_time')?.textContent?.trim() || '';
                     if (title) {
+                        const imageHtml = this._buildExcelImagesHtml(el.querySelectorAll('.threadlist_media img, .threadlist_pic img'));
                         const cell = href
-                            ? `<a href="${this._escapeAttr(href)}">${this._escapeHtml(title)}</a>`
-                            : this._escapeHtml(title);
+                            ? `<a href="${this._escapeAttr(href)}">${this._escapeHtml(title)}</a>${imageHtml}`
+                            : `${this._escapeHtml(title)}${imageHtml}`;
                         rows.push([`${i + 1}`, this._htmlCell(cell), author, reply, last]);
                     }
                 });
@@ -2688,6 +2939,7 @@
             });
 
             document.addEventListener('click', e => {
+                if (!ctx.isExcelManagedMode()) return;
                 const target = e.target;
                 if (target.tagName !== 'IMG') return;
                 const isBDE = target.classList.contains('BDE_Image') || target.matches('.d_post_content img[pic_type]');
@@ -2779,13 +3031,24 @@
         _loading: false,
         _finished: false,
         _nextUrl: null,
+        _observer: null,
         initFunc(ctx) {
-            if (!ctx.setting.normal.autoPage) return;
+            if (ctx.isExcelManagedMode()) this.start(ctx);
+        },
+        /**
+         * 在 Excel 托管开启时启动自动翻页观察器。
+         * @param {TieBaScript} ctx 脚本运行上下文。
+         * @returns {void} 无返回值；功能关闭或已经启动时直接返回。
+         */
+        start(ctx) {
+            if (!ctx.setting.normal.autoPage || this._observer || document.getElementById('tb__autopage_sentinel')) return;
             const self = this;
+            this._finished = false;
+            this._nextUrl = null;
 
             self._findNextUrl();
 
-            const observer = new IntersectionObserver(entries => {
+            this._observer = new IntersectionObserver(entries => {
                 if (entries[0].isIntersecting && !self._loading && !self._finished) {
                     self._loadNext(ctx);
                 }
@@ -2798,8 +3061,21 @@
             const pager = document.querySelector('.pb_list_pager, #frs_list_pager, .l_pager');
             if (pager) {
                 pager.parentElement.insertBefore(sentinel, pager.nextSibling);
-                observer.observe(sentinel);
+                this._observer.observe(sentinel);
+            } else {
+                this._observer.disconnect();
+                this._observer = null;
             }
+        },
+        /**
+         * 停止自动翻页并清理托管期间创建的观察节点。
+         * @returns {void} 无返回值；用于关闭 `R` 时恢复贴吧原生页面。
+         */
+        stop() {
+            this._observer?.disconnect();
+            this._observer = null;
+            document.getElementById('tb__autopage_sentinel')?.remove();
+            this._loading = false;
         },
         _findNextUrl() {
             const nextLink = document.querySelector('.pb_list_pager a.next, #frs_list_pager a.next, .l_pager .pager_theme_5:last-child');
@@ -2825,13 +3101,21 @@
                     const newThreads = doc.querySelectorAll('.j_thread_list');
                     const container = document.querySelector('#thread_list');
                     if (container && newThreads.length) {
-                        newThreads.forEach(t => container.appendChild(document.importNode(t, true)));
+                        newThreads.forEach(thread => {
+                            const imported = document.importNode(thread, true);
+                            imported.dataset.tbManagedAutopage = '1';
+                            container.appendChild(imported);
+                        });
                     }
                 } else if (ctx.isForms()) {
                     const newPosts = doc.querySelectorAll('.l_post.j_l_post');
                     const container = document.querySelector('#j_p_postlist');
                     if (container && newPosts.length) {
-                        newPosts.forEach(p => container.appendChild(document.importNode(p, true)));
+                        newPosts.forEach(post => {
+                            const imported = document.importNode(post, true);
+                            imported.dataset.tbManagedAutopage = '1';
+                            container.appendChild(imported);
+                        });
                     }
                 }
 
@@ -2859,6 +3143,9 @@
         renderThreadsFunc(el, ctx) {
             if (!ctx.setting.normal.linkTargetBlank) return;
             el.querySelectorAll('.threadlist_title a, .j_th_tit').forEach(a => {
+                if (!Object.prototype.hasOwnProperty.call(a.dataset, 'tbManagedTarget')) {
+                    a.dataset.tbManagedTarget = a.getAttribute('target') || '';
+                }
                 a.setAttribute('target', '_blank');
             });
         }
@@ -2871,10 +3158,10 @@
         name: 'BaseStyle',
         title: '基础样式',
         style: `
-            ::-webkit-scrollbar{width:8px;height:8px}
-            ::-webkit-scrollbar-track{background:transparent}
-            ::-webkit-scrollbar-thumb{background:#c1c1c1;border-radius:4px}
-            ::-webkit-scrollbar-thumb:hover{background:#a1a1a1}
+            body.tb__excel-managed ::-webkit-scrollbar{width:8px;height:8px}
+            body.tb__excel-managed ::-webkit-scrollbar-track{background:transparent}
+            body.tb__excel-managed ::-webkit-scrollbar-thumb{background:#c1c1c1;border-radius:4px}
+            body.tb__excel-managed ::-webkit-scrollbar-thumb:hover{background:#a1a1a1}
             body.tb__dark-mode ::-webkit-scrollbar-thumb{background:#484f58}
             body.tb__dark-mode ::-webkit-scrollbar-track{background:#0d1117}
         `
@@ -2889,11 +3176,13 @@
         renderAlwaysFunc(ctx) {
             ctx.$$('img[data-tb-lazyload]').forEach(img => {
                 if (!img.src || img.src.includes('data:image')) {
+                    img.dataset.tbManagedSrc = img.getAttribute('src') || '';
                     img.src = img.getAttribute('data-tb-lazyload');
                 }
             });
             ctx.$$('img[original]').forEach(img => {
                 if (!img.src || img.src.includes('data:image')) {
+                    img.dataset.tbManagedSrc = img.getAttribute('src') || '';
                     img.src = img.getAttribute('original');
                 }
             });
