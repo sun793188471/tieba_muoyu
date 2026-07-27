@@ -1,6 +1,6 @@
 {
   "name": "tieba-moyu",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "description": "百度贴吧优化摸鱼体验 userscript 的回归测试",
   "scripts": {

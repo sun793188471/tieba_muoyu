@@ -29,7 +29,8 @@ async function runLiveSmoke(url, sourceFile = '') {
     const { window } = dom;
     const values = new Map([
         ['tb__rt_excelMode', 'true'],
-        ['tb__rt_hideImage', 'false']
+        ['tb__rt_hideImage', 'false'],
+        ['tb__setting', JSON.stringify({ hideAvatar: true })]
     ]);
 
     window.GM_getValue = key => values.get(key);
@@ -61,8 +62,24 @@ async function runLiveSmoke(url, sourceFile = '') {
         throw new Error('没有生成贴吧原图候选地址');
     }
 
+    const mainAvatar = window.document.querySelector('.p_author_face');
+    const floorAvatar = window.document.querySelector('.lzl_single_post > .lzl_p_p');
+    const mainAvatarHidden = mainAvatar ? window.getComputedStyle(mainAvatar).display === 'none' : false;
+    const floorAvatarHidden = floorAvatar ? window.getComputedStyle(floorAvatar).display === 'none' : false;
+    if (!mainAvatarHidden || !floorAvatarHidden) {
+        throw new Error(`头像隐藏不完整: 主楼 ${mainAvatarHidden}, 楼中楼 ${floorAvatarHidden}`);
+    }
+
     dom.window.close();
-    return { url, sourceImages, excelImages: excelImages.length, preview: firstImage.src, candidates };
+    return {
+        url,
+        sourceImages,
+        excelImages: excelImages.length,
+        preview: firstImage.src,
+        candidates,
+        mainAvatarHidden,
+        floorAvatarHidden
+    };
 }
 
 runLiveSmoke(targetUrl, htmlFile)

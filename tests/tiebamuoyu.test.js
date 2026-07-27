@@ -122,6 +122,38 @@ test('扩展坞设置按钮首次点击即可创建设置面板', t => {
     assert.equal(env.document.querySelector('#tb__setting_cover')?.style.display, 'flex');
 });
 
+test('Excel 模式工具栏可直接呼出基础设置', t => {
+    const env = createEnvironment({ values: { tb__rt_excelMode: 'true' } });
+    t.after(env.close);
+
+    const settingsButton = env.document.querySelector('#tb__excel_setting');
+    assert.ok(settingsButton);
+    settingsButton.click();
+    assert.equal(env.document.querySelector('#tb__setting_cover')?.style.display, 'flex');
+    assert.ok(env.document.querySelector('#tb__section_normal').classList.contains('active'));
+});
+
+test('设置面板展示实际状态且保存后清除快捷键覆盖', t => {
+    const env = createEnvironment({
+        values: {
+            tb__rt_hideAvatar: 'false',
+            tb__rt_hideImage: 'true'
+        }
+    });
+    t.after(env.close);
+
+    env.menuCommands.get('贴吧摸鱼设置')();
+    assert.equal(env.document.querySelector('#tb__cb_hideAvatar').checked, false);
+    assert.equal(env.document.querySelector('#tb__cb_hideImage').checked, true);
+    env.document.querySelector('#tb__cb_hideAvatar').checked = true;
+    env.document.querySelector('#tb__save_btn').click();
+
+    assert.equal(JSON.parse(env.store.get('tb__setting')).hideAvatar, true);
+    assert.equal(JSON.parse(env.store.get('tb__setting')).hideImage, true);
+    assert.equal(env.store.has('tb__rt_hideAvatar'), false);
+    assert.equal(env.store.has('tb__rt_hideImage'), false);
+});
+
 test('显式运行时关闭状态优先于基础设置默认开启', t => {
     const env = createEnvironment({
         values: {
@@ -343,6 +375,18 @@ test('帖子增强设置可折叠楼中楼、标记楼主、修复懒加载和�
     assert.equal(env.document.querySelectorAll('.tb__author-badge').length, 1);
     assert.ok(env.document.querySelector('#tb__img_viewer'));
     assert.match(env.document.querySelector('.BDE_Image').src, /settings-image\.jpg/);
+});
+
+test('隐藏头像设置覆盖主楼头像和楼中楼头像', t => {
+    const env = createEnvironment({
+        html: fixture('settings-post.html'),
+        url: 'https://tieba.baidu.com/p/30000',
+        values: { tb__setting: JSON.stringify({ hideAvatar: true }) }
+    });
+    t.after(env.close);
+
+    assert.equal(env.window.getComputedStyle(env.document.querySelector('#tb__main_avatar').closest('.p_author_face')).display, 'none');
+    assert.equal(env.window.getComputedStyle(env.document.querySelector('#tb__lzl_avatar').closest('.lzl_p_p')).display, 'none');
 });
 
 test('自动翻页设置会在触底后追加下一页帖子', async t => {

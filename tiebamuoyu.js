@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         百度贴吧优化摸鱼体验
 // @namespace    tieba-moyu-script
-// @version      2.0.0
+// @version      2.0.1
 // @author       Moyu
 // @description  百度贴吧显示优化，功能增强，优雅的摸鱼
 // @license      MIT
@@ -29,7 +29,7 @@
             this.setting = { original: [], normal: {}, advanced: {} };
             this.modules = [];
             this.style = '';
-            this.version = '2.0.0';
+            this.version = '2.0.1';
         }
 
         getModule(name) {
@@ -165,6 +165,25 @@
         }
 
         /**
+         * 获取设置面板应展示的实际布尔状态，合并基础配置和快捷键运行时覆盖。
+         * @param {string} key 基础设置键。
+         * @returns {boolean} 当前页面实际生效的开关状态。
+         */
+        getEffectiveNormalBoolean(key) {
+            const runtimeKeys = {
+                hideAvatar: 'tb__rt_hideAvatar',
+                hideImage: 'tb__rt_hideImage',
+                darkMode: 'tb__rt_darkMode',
+                eyeCareMode: 'tb__rt_eyeCareMode',
+                excelMode: 'tb__rt_excelMode'
+            };
+            const runtimeKey = runtimeKeys[key];
+            return runtimeKey
+                ? this.getRuntimeBoolean(runtimeKey, this.setting.normal[key])
+                : Boolean(this.setting.normal[key]);
+        }
+
+        /**
          * 获取页面图片当前可用的预览地址，优先使用贴吧懒加载属性。
          * @param {HTMLImageElement} image 图片元素。
          * @returns {string} 可用于表格预览的图片地址；没有有效地址时返回空字符串。
@@ -264,6 +283,15 @@
                 if (cb) this.setting.normal[k] = cb.checked;
             }
             this.setValue('tb__setting', JSON.stringify(this.setting.normal));
+            const runtimeKeys = {
+                hideAvatar: 'tb__rt_hideAvatar',
+                hideImage: 'tb__rt_hideImage',
+                darkMode: 'tb__rt_darkMode',
+                eyeCareMode: 'tb__rt_eyeCareMode',
+                excelMode: 'tb__rt_excelMode'
+            };
+            // 设置面板是完整配置入口，保存后清除快捷键临时状态，避免旧状态继续覆盖新配置。
+            Object.values(runtimeKeys).forEach(key => this.deleteValue(key));
             for (const k in this.setting.advanced) {
                 const el = document.getElementById('tb__adv_' + k);
                 if (!el) continue;
@@ -536,7 +564,7 @@
                 for (const [gname, items] of Object.entries(groups)) {
                     normalHTML += `<div class="tb__setting-group"><h4>${gname}</h4>`;
                     items.forEach(s => {
-                        const checked = ctx.setting.normal[s.key] ? 'checked' : '';
+                        const checked = ctx.getEffectiveNormalBoolean(s.key) ? 'checked' : '';
                         normalHTML += `
                             <div class="tb__setting-item">
                                 <label for="tb__cb_${s.key}">${s.title || s.key}${s.desc ? `<small>${s.desc}</small>` : ''}</label>
@@ -681,10 +709,12 @@
     script.addModule({
         name: 'HideAvatar',
         title: '隐藏头像',
-        setting: { key: 'hideAvatar', title: '隐藏头像', desc: '隐藏用户头像 [快捷键 Q]', default: false, group: '界面优化' },
+        setting: { key: 'hideAvatar', title: '隐藏头像', desc: '勾选即隐藏，取消勾选恢复显示 [快捷键 Q]', default: false, group: '界面优化' },
         style: `
             body.tb__hide-avatar .d_author .p_author_face,
+            body.tb__hide-avatar .p_author_face,
             body.tb__hide-avatar .icon_author,
+            body.tb__hide-avatar .lzl_single_post > .lzl_p_p,
             body.tb__hide-avatar .lzl_single_post .lzl_cnt .lzl_content_main .j_user_card img,
             body.tb__hide-avatar .threadlist_author .tb_icon_author,
             body.tb__hide-avatar .tb_icon_author_rely {display:none!important}
@@ -1502,7 +1532,8 @@
                     <div class="tb__excel-menu">
                         <span>文件</span><span>开始</span><span>插入</span><span>页面布局</span><span>公式</span><span>数据</span><span>审阅</span><span>视图</span>
                     </div>
-                    <span style="margin-left:auto;cursor:pointer" id="tb__excel_close" title="退出Excel模式">✕ 退出</span>
+                    <span style="margin-left:auto;cursor:pointer" id="tb__excel_setting" title="打开摸鱼设置">⚙ 设置</span>
+                    <span style="cursor:pointer" id="tb__excel_close" title="退出Excel模式">✕ 退出</span>
                 </div>
                 <div class="tb__excel-ribbon">
                     <select><option>等线</option><option>宋体</option><option>微软雅黑</option></select>
@@ -1530,6 +1561,10 @@
 
             this._bindOverlayEvents(overlay);
             this._renderTable(overlay, rows, pageType);
+
+            overlay.querySelector('#tb__excel_setting').addEventListener('click', () => {
+                ctx.openSettingPanel?.();
+            });
 
             overlay.querySelector('#tb__excel_close').addEventListener('click', () => {
                 this._active = false;
